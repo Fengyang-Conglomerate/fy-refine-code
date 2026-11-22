@@ -1,0 +1,20 @@
+[package]
+name = "fy-refine-macro"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+description = "Zero-dependency procedural derive macros for fy-refine (SafeValue, SafeDrop, SafeClone, Projectors)"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+
+[lints]
+workspace = true

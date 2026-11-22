@@ -1,0 +1,205 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.toolchain }}, ${{ matrix.features }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: ["1.86.0", stable]
+        features:
+          - "--no-default-features"
+          - "--no-default-features --features alloc"
+          - "--no-default-features --features serde"
+          - "--features serde"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal
+      - name: Test library, integration tests, and documentation
+        run: cargo +${{ matrix.toolchain }} test --workspace --locked ${{ matrix.features }}
+      - name: Test English and Chinese README examples
+        if: matrix.features == '--no-default-features --features alloc' || matrix.features == '--features serde'
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+          FEATURES: ${{ matrix.features }}
+        run: |
+          python3 - <<'PY'
+          import json, os, shlex, subprocess
+
+          tc = os.environ["TOOLCHAIN"]
+          feat = shlex.split(os.environ["FEATURES"])
+          cmd = ["cargo", f"+{tc}", "build", "--workspace", "--locked", "--message-format=json", *feat]
+          proc = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True)
+
+          externs = []
+          dep_dirs = set()
+          for line in proc.stdout.splitlines():
+              msg = json.loads(line)
+              if msg.get("reason") != "compiler-artifact":
+                  continue
+              kinds = msg["target"]["kind"]
+              if "lib" not in kinds and "proc-macro" not in kinds:
+                  continue
+              name = msg["target"]["name"].replace("-", "_")
+              for path in msg.get("filenames", []):
+                  if path.endswith((".rlib", ".rmeta", ".so", ".dylib", ".dll")):
+                      dep_dirs.add(os.path.dirname(path))
+                      if name in ("fy_refine", "fy_refine_core") and path.endswith((".rlib", ".rmeta")):
+                          externs.append((name, path))
+
+          args = []
+          for k, v in sorted(externs):
+              args += ["--extern", f"{k}={v}"]
+          for d in sorted(dep_dirs):
+              args += ["-L", f"dependency={d}"]
+
+          for readme in ("README.md", "README.zh-CN.md"):
+              subprocess.run(["rustdoc", f"+{tc}", "--test", readme, "--edition=2024", *args], check=True)
+          PY
+
+  nightly:
+    name: Nightly tests, Clippy, and documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install nightly Rust
+        run: rustup toolchain install nightly --profile minimal --component clippy
+      - run: cargo +nightly test --workspace --locked --features "serde,nightly"
+      - run: cargo +nightly clippy --workspace --locked --all-targets --features "serde,nightly" -- -D warnings
+      - run: cargo +nightly doc --workspace --locked --no-deps --features "serde,nightly"
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Test English and Chinese README examples (nightly)
+        env:
+          TOOLCHAIN: nightly
+          FEATURES: '--features serde,nightly'
+        run: |
+          python3 - <<'PY'
+          import json, os, shlex, subprocess
+
+          tc = os.environ["TOOLCHAIN"]
+          feat = shlex.split(os.environ["FEATURES"])
+          cmd = ["cargo", f"+{tc}", "build", "--workspace", "--locked", "--message-format=json", *feat]
+          proc = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True)
+
+          externs = []
+          dep_dirs = set()
+          for line in proc.stdout.splitlines():
+              msg = json.loads(line)
+              if msg.get("reason") != "compiler-artifact":
+                  continue
+              kinds = msg["target"]["kind"]
+              if "lib" not in kinds and "proc-macro" not in kinds:
+                  continue
+              name = msg["target"]["name"].replace("-", "_")
+              for path in msg.get("filenames", []):
+                  if path.endswith((".rlib", ".rmeta", ".so", ".dylib", ".dll")):
+                      dep_dirs.add(os.path.dirname(path))
+                      if name in ("fy_refine", "fy_refine_core") and path.endswith((".rlib", ".rmeta")):
+                          externs.append((name, path))
+
+          args = []
+          for k, v in sorted(externs):
+              args += ["--extern", f"{k}={v}"]
+          for d in sorted(dep_dirs):
+              args += ["-L", f"dependency={d}"]
+
+          for readme in ("README.md", "README.zh-CN.md"):
+              subprocess.run(["rustdoc", f"+{tc}", "--test", readme, "--edition=2024", *args], check=True)
+          PY
+
+  quality:
+    name: Format, Clippy, documentation, and package check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - run: cargo +stable fmt --all -- --check
+      - run: cargo +stable clippy --workspace --locked --all-targets --no-default-features -- -D warnings
+      - run: cargo +stable clippy --workspace --locked --all-targets --features serde -- -D warnings
+      - run: cargo +stable doc --workspace --locked --no-deps --features serde
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Validate core and macro package contents and build
+        run: |
+          cargo +stable package -p fy-refine-core --locked
+          cargo +stable package -p fy-refine-macro --locked
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Rust and LLVM tools
+        run: rustup toolchain install stable --profile minimal --component llvm-tools-preview
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - name: Collect coverage across feature sets
+        run: |
+          cargo +stable llvm-cov clean --workspace
+          cargo +stable llvm-cov --workspace --locked --no-default-features --no-report
+          cargo +stable llvm-cov --workspace --locked --features serde --no-report
+          mkdir -p target/coverage
+          cargo +stable llvm-cov report --lcov --ignore-filename-regex '/tests/' --output-path target/coverage/lcov.info
+          cargo +stable llvm-cov report --summary-only --ignore-filename-regex '/tests/'
+      # Use the read-only, short-lived GitHub Actions token; no repository secret is needed.
+      - name: Upload coverage to Coveralls
+        if: github.event.repository.private == false
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2
+        with:
+          github-token: ${{ github.token }}
+          file: target/coverage/lcov.info
+          format: lcov
+          flag-name: unittests
+          fail-on-error: true
+
+  no-std:
+    name: no_std (${{ matrix.target }}, ${{ matrix.features }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [wasm32-unknown-unknown, thumbv7m-none-eabi]
+        features: ["--no-default-features", "--no-default-features --features alloc"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Rust and target
+        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+      - name: Check without the standard library
+        run: cargo +stable check --workspace --locked --lib --target ${{ matrix.target }} ${{ matrix.features }}

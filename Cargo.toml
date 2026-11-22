@@ -1,0 +1,21 @@
+[workspace]
+members = ["crates/core", "crates/macro", "crates/fy-refine"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+authors = ["Fengyang Conglomerate Software Department"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Fengyang-Conglomerate/fy-refine-code"
+keywords = ["refinement-types", "type-safety", "no-std", "validation", "predicate"]
+categories = ["no-std", "data-structures", "rust-patterns"]
+
+[workspace.dependencies]
+fy-refine-core = { version = "0.1.0", path = "crates/core", default-features = false }
+fy-refine-macro = { version = "0.1.0", path = "crates/macro" }
+serde = { version = "1", default-features = false }
+
+[workspace.lints.rust]
+missing_docs = "deny"

@@ -1,0 +1,28 @@
+[package]
+name = "fy-refine-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+description = "Core refinement types, safety contracts, and pure predicate combinators for fy-refine"
+
+[package.metadata.docs.rs]
+features = ["serde"]
+
+[features]
+default = ["std"]
+std = ["alloc", "serde?/std"]
+alloc = ["serde?/alloc"]
+serde = ["dep:serde"]
+nightly = []
+
+[dependencies]
+serde = { workspace = true, optional = true }
+
+[lints]
+workspace = true
